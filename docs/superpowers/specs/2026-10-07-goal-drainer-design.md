@@ -71,6 +71,19 @@ sessione con sé. Da qui la scelta del giudice come subagent.
 Su Zen, `opencode/space-bunny-free` risponde e funziona; gli altri modelli free di Zen sono
 rifiutati con *"OpenCode's free tier can only be used from within OpenCode"*.
 
+### 2.4 Cosa c'è effettivamente in abbonamento
+
+L'utente ha **solo il piano Go**. I modelli con provider `opencode` (Zen) che riportano
+costo 0 sono il **free tier**, sempre disponibile e non scalato sull'abbonamento: i docs Go
+dicono esplicitamente *"If you reach the usage limit, you can continue using the free
+models"*.
+
+Ne segue che l'unica spesa che il drainer può generare è quella sui modelli `opencode-go/*`.
+I modelli free consumano quota zero e vanno contati solo in token, per informazione.
+
+Questo ribalta la scelta del giudice: un giudice che gira su un modello Go è un giudice che
+mangia il tetto mensile per fare un compito che non vale quei soldi.
+
 ## 3. Perché non `opencode-goal-worker`
 
 Il pacchetto npm è 378 righe di markdown e zero righe di codice: non è un plugin, è un primary
@@ -147,10 +160,10 @@ Il giudice, invece, è un subagent separato con modello proprio.
   "plugins": [
     { "package": "/home/ld/opencode-goal",
       "options": {
-        "judgeModel": "opencode-go/muse-spark-1.3-contributor",
-        "judgeFallbackModels": ["opencode-go/mimo-v2.6-flash"],
+        "judgeModel": "opencode/space-bunny-free",
+        "judgeFallbackModels": ["opencode/big-pickle"],
         "budgetPercent": 10,
-        "monthlyLimitsUSD": { "opencode-go/muse-spark-1.3-contributor": 60 },
+        "monthlyLimitsUSD": { "opencode-go/space-bunny": 30 },
         "autoApprove": true,
         "stallTurns": 5,
         "verifyTimeoutMs": 600000
@@ -224,8 +237,14 @@ l'item compaiono data, numero di turni, esito della verifica e motivo del verdet
 
 ## 7. Il giudice
 
-Subagent `goal-judge`, `mode: subagent`, modello `opencode-go/muse-spark-1.3-contributor`
-($0.10 in / $0.20 out per Mtok, 226.600 richieste/mese, tetto mensile $60).
+Subagent `goal-judge`, `mode: subagent`, **modello free**: `opencode/space-bunny-free`.
+Testato funzionante e su 1M di contesto; è già il modello della sessione corrente quindi il
+suo comportamento è noto. Non consuma il piano Go.
+
+Un modello Go per il giudice è disponibile ma **non è il default**, perché l'unico piano
+sottoscritto è Go e il giudice non vale un consumo di quota: si imposta solo con
+`judgeModel` in config, e da quel momento il suo costo entra nel tetto come qualsiasi altro
+modello Go.
 
 Tutti i tool negati: il giudice legge, non agisce.
 
@@ -252,7 +271,8 @@ tentativo viene contato nello stall detector. **Un errore del giudice non può m
 
 ## 8. Budget percentuale
 
-Il tetto è una percentuale del **limite mensile del modello consumato**, contata per modello.
+Il tetto è una percentuale del **limite mensile del modello consumato**, contata per modello,
+e vale **solo per i modelli `opencode-go/*`**: sono gli unici che scalano sull'abbonamento.
 
 - `budgetPercent`, default **10**
 - il tetto del modello X è `budgetPercent/100 × monthlyLimitsUSD[X]`
@@ -260,6 +280,13 @@ Il tetto è una percentuale del **limite mensile del modello consumato**, contat
   goal, dal momento dell'avvio, raggruppata per modello
 - `session.stats` serve da controllo incrociato e da riferimento: non è filtrabile per sessione,
   quindi non è la fonte primaria
+- i modelli free non hanno tetto: il loro consumo è riportato in token e non ferma mai nulla
+
+**Conseguenza da tenere presente:** se la sessione lavora su modelli free, il tetto
+percentuale è inerte per costruzione, e il report lo dice esplicitamente invece di far
+credere che sia attivo. Il tetto diventa vivo nel momento in cui un modello Go entra in
+gioco, sia come lavoratore sia come giudice. È il comportamento corretto, non un difetto:
+un tetto che non scatta quando non si spende è giusto, ma deve dirlo.
 
 ### 8.1 Le tre finestre di Go
 
@@ -274,10 +301,11 @@ quando la spesa della run è concentrata in una finestra 5 ore. Non ferma il dre
 questo da solo: fermarsi ce l'ha già il tetto percentuale. Il segnalamento serve a te, che
 vedi il report mentre gira.
 
-### 8.2 Modelli gratis
+### 8.2 Modelli free
 
-Se il modello ha `monthlyLimitsUSD` assente o costo 0 (Zen free, `space-bunny-free`), il
-contatore non ferma mai. Viene comunque riportato in token, così il limite di lavoro si legge.
+Se il modello ha `monthlyLimitsUSD` assente o costo 0 (free tier Zen), il contatore non ferma
+mai e non ha soglie da mostrare. Il report lo dichiara con una riga esplicita invece di
+mostrare uno 0% che sembrerebbe una misura.
 
 ## 9. Sicurezza e arresti
 
@@ -323,9 +351,14 @@ una porta libera. Deve confermare:
 
 1. cosa contiene davvero il ctx del plugin V2 in 2.0.14, e se `command.add` esiste
 2. la forma esatta dell'evento `session.idle`
-3. che un subagent con modello `opencode-go/*` venga **accettato** (è la premessa di §7; se
-   fallisce, il giudice torna su `experimental.generate` e si perde Go)
-4. che `POST /api/shell` riporti l'exit code come atteso
+3. **quali modelli free accettano un subagent.** Il default di §7 è `opencode/space-bunny-free`,
+   che ha risposto sulla rotta stateless ma di cui non è nota la disponibilità come subagent;
+   gli altri free di Zen sono già rifiutati. Va verificato `space-bunny-free` e, in ordine,
+   `big-pickle`. Se nessuno regge, il giudice va su Go e il suo consumo entra nel tetto: in
+   quel caso la scelta torna a essere una decisione economica, non tecnica
+4. che un subagent su `opencode-go/*` venga accettato, per lo stesso motivo: decidere se Go
+   è spendibile per il giudice richiede di sapere se è raggiungibile
+5. che `POST /api/shell` riporti l'exit code come atteso
 
 Se la probe contraddice §7, il design si ferma e si corregge **prima** di scrivere il loop. La
 probe viene buttata.
@@ -342,7 +375,9 @@ probe viene buttata.
 
 | Rischio | Stato |
 |---|---|
-| Go rifiuta il subagent come ha rifiutato la rotta stateless | **non verificato**, è il punto 3 della probe |
+| Nessun free tier accetta un subagent | **non verificato**, è il punto 3 della probe; se regge Go, il giudice costa quota e la scelta va rifatta |
+| Go rifiuta il subagent come ha rifiutato la rotta stateless | **non verificato**, punto 4 della probe |
 | I limiti mensili Go cambiano | tabella nel plugin, sovrascrivibile dalla config |
-| Il giudice free/cheap rifiuta `done` che merita | scelta deliberata: preferisce un `continue` in più a un `done` in meno |
+| Il giudice free rifiuta un `done` che merita | scelta deliberata: preferisce un `continue` in più a un `done` in meno |
 | Un item con `Verify:` debole | difesa del progetto, non del plugin: `Verify:` è dichiarato e versionato |
+| Il tetto percentuale è inerte se tutto gira su free | voluto e dichiarato nel report, vedi §8 |
