@@ -1,6 +1,6 @@
 # FINDINGS — probe del substrato runtime, opencode 2.0.14
 
-Generato da `probe/run.sh` il 2026-10-07T13:18:51+02:00. Run `1791371903-869792`, porta `4599`, HOME isolato `/tmp/opencode/probe-home`.
+Generato da `probe/run.sh` il 2026-10-07T14:32:48+02:00. Run `1791376319-936205`, porta `4599`, HOME isolato `/tmp/opencode/probe-home`.
 
 Metodo: `opencode serve` su porta libera con `HOME` e `XDG_CONFIG_HOME` puntati a una
 directory temporanea, e `env -u` su otto variabili d'ambiente
@@ -14,12 +14,19 @@ Il `pid` riportato da `GET /api/info` viene confrontato con il pid che la probe 
 avviato: una porta occupata da un'altra istanza risponderebbe `200` prima che il
 server della probe esista, e tutta la misura finirebbe addosso a quello.
 
-Ogni risposta è un fatto misurato in questa esecuzione. Dove la prova non è riuscita
-la sezione dice **non misurato** con l'errore esatto: nessun valore è dedotto dal
+Ogni risposta è un fatto misurato **in questa esecuzione**. `probe/out/` viene
+svuotato a ogni run, quindi ogni artefatto citato qui è di questa esecuzione e non
+ha una versione precedente che lo contraddica. Dove una prova non è riuscita la
+sezione dice **non misurato** con l'errore esatto: nessun valore è dedotto dal
 codice o dai typings.
 
+Le osservazioni sul percorso di errore vengono prodotte da una sezione di
+**controprove** (`probe/controprove/`), che avvia un secondo server con il proprio
+HOME e la propria porta e carica plugin volutamente difettosi: il percorso felice
+non le genera, e senza controprove sarebbero affermazioni senza artefatto.
+
 Evidenze grezze in `probe/out/`: `serve.log`, `plugin-last.jsonl`,
-`events-*.log`, `q*.json`, `session-*.json`.
+`events-*.log`, `q*.json`, `session-*.json`, `controprove/`.
 
 ---
 
@@ -41,11 +48,26 @@ Evidenze grezze in `probe/out/`: `serve.log`, `plugin-last.jsonl`,
 
 `probe/plugin-probe/index.ts` chiama `ctx.command.transform(cb)` dentro `setup`, e
 `cb` registra `Object.keys(draft)` e il tipo di ogni membro, poi chiama `draft.add`.
-Il plugin è caricato da `$ROOT/.config/opencode/opencode.json` con
-`plugins: [{package: "<repo>/probe/plugin-probe"}]`. L'errore che chiude la misura
-è evitabile: `command.transform` prende **una callback**, non un editor — chiamarlo
-con `{}` disabilita il plugin con `disabled plugin after transform failure …
-'pe' is not a function`.
+Il plugin è caricato dal config dell'`HOME` isolato, con
+`plugins: [{package: "<repo>/probe/plugin-probe"}]` — il percorso esatto è in
+`probe/out/info.json` e nella riga `Generato da` in testa a questo documento.
+
+La forma sbagliata della chiamata è misurata in questa esecuzione, in una
+controprova separata (`probe/controprove/bad-transform/`): `command.transform` prende
+**una callback**, non un editor, e chiamarlo con `{}` disabilita il plugin.
+
+- plugin caricato (`msg="loading plugin"` nel log applicativo): `1` volte
+- messaggio: `disabled plugin after transform failure" plugin.id=probe-bad-transform state=tool ref=err_537762a7 cause="Cause([Die(Ty`
+- `state` indicato: `state=tool`
+- in `GET /api/plugin`: `failed`
+- testo integrale: `probe/out/controprove/opencode.log`
+
+**Una riserva su `state`.** Il plugin difettoso chiama **entrambi** i transform
+sbagliati, e il runtime ne segnala uno solo per esecuzione: quello riportato sopra è
+il primo che fallisce nell'ordine di attivazione, e può cambiare da un run
+all'altro. Non si deve dedurre `state=command` da una misura che ha riportato
+`state=tool`. Artefatti in `probe/out/controprove/`.
+
 
 ### Cosa cambia nella spec se la risposta è diversa da quella prevista
 
@@ -59,7 +81,7 @@ installare il file di comando — costo piccolo, nessun altro task dipende.
 **Correzione che questa misura impone a `§2.3`.** La spec dice che «i typings V2 di
 `PluginContext` non contengono `session`, `event`, `tool`, `permission`,
 `generate``. I typings 1.18.16 in effetti non li contengono, ma il runtime li passa:
-`Object.keys(input)` al `setup` = `app, location, options, agent, aisdk, command, event, experimental, generate, model, provider, integration, mcp, permission, plugin, reference, rpc, skill, storage, tool, vcs, websearch, worktree, session, shell`
+`Object.keys(input)` al `setup` = **app location options agent aisdk command event experimental generate model provider integration mcp permission plugin reference rpc skill storage tool vcs websearch worktree session shell**, 25 chiavi.
 
 ---
 
@@ -73,14 +95,15 @@ installare il file di comando — costo piccolo, nessun altro task dipende.
 - tipo dei membri: `{"list":"function","get":"function","namespace":"function","add":"function","update":"function","remove":"function"}`
 - `typeof draft.add` = `function`, arità 1
 - `draft.add({name, description, args, execute})` → `{"ok":true}`
-- `draft.list()` prima del `add`: 60 tool, con `probe_tool` già presente: `true`
+- `draft.list()` **prima** del `add`: 60 tool; `probe_tool` presente: `false`
+- `draft.list()` **dopo** il `add`: `{"length":61,"hasProbeTool":true}`
 - `draft.get("probe_tool")` dopo il `add` → `{"ok":true,"type":"object","keys":["name","description","args","execute","id","options"]}`
 
 Il tool è stato registrato dal plugin e **chiamato dal modello** durante un turno
 reale su `opencode/space-bunny-free`. Cosa ricevono i due parametri di `execute`:
 
 ```json
-{"args":{},"context":{"sessionID":"string","agent":"string","messageID":"string","id":"string","progress":"function","signal":"object"},"sessionID":"ses_ee9e9f741ffe7djc232vfNlVwC","messageID":"msg_116160ef9001Pi0S7tm52JPPQI","agent":"build","directory":null,"worktree":null,"abortType":"undefined","abortAborted":null,"metadataType":"undefined","askType":"undefined"}
+{"args":{},"context":{"sessionID":"string","agent":"string","messageID":"string","id":"string","progress":"function","signal":"object"},"sessionID":"ses_ee9a64802ffeIgk1O7WUmCf22E","messageID":"msg_11659bc30001d8z6OzMIiIKf0e","agent":"build","directory":null,"worktree":null,"abortType":"undefined","abortAborted":null,"metadataType":"undefined","askType":"undefined"}
 ```
 
 - `Object.keys(args)` = `` — il tool è stato dichiarato con `args: {}`, quindi la lista vuota è quella attesa, non un'assenza di argomenti
@@ -105,16 +128,30 @@ plugin è possibile, ma con tre prezzi che la spec non prevedeva.
 
 1. **`name` è obbligatorio.** Senza, `draft.add` fallisce con
    `TypeError: undefined is not an object (evaluating 'e.name.replace')`.
-2. **La mappa `Hooks.tool` dei typings 1.18.16 non registra niente.** I tool si
-   registrano dentro la callback di `ctx.tool.transform`. Un plugin che segue i
-   typings — restituire `{ tool: { goal_control: {...} } }` da `setup` — non registra
-   niente e, peggio, fa fallire il transform dei tool **per tutti gli altri
-   plugin** (`disabled plugin after transform failure`, `state=tool`): un plugin
-   scritto con i typings pubblicati può disabilitare il tool layer dell'intero
-   server. Vale per `command`: la stessa chiave negli hooks disabilita il command
-   layer (`state=command`). Quindi `setup` **non deve restituire chiavi `command` o
-   `tool`**, e i tool vanno aggiunti con
-   `ctx.tool.transform(draft => draft.add({name, description, args, execute}))`.
+2. **Restituire `{ tool: ... }` o `{ command: ... }` dagli hooks di `setup` non
+   registra niente, e disabilita il plugin.** I tool si registrano dentro la
+   callback di `ctx.tool.transform`; gli hook restituiti da `setup` non sono il
+   canale di registrazione. Misurato in questa esecuzione, in
+   `probe/controprove/bad-transform/`, che chiama `command.transform({})` e
+   `tool.transform({})` al posto delle callback:
+
+   - il plugin è stato caricato: `1` volte
+   - messaggio: `disabled plugin after transform failure" plugin.id=probe-bad-transform state=tool ref=err_537762a7 cause="Cause([Die(Ty`
+   - `state` indicato nel messaggio: `state=tool`
+   - in `GET /api/plugin`: `failed` — \`Plugin disabled after tool.transform failed. Check server logs for details.\`
+
+   Il `state` di cui sopra è **uno solo dei due** che il plugin difettoso provoca:
+   chiama `command.transform({})` e `tool.transform({})`, e il runtime ne segnala uno
+   per esecuzione. Non si deduce l'altro da questa misura.
+
+   Quindi `setup` **non deve restituire chiavi `command` o `tool`**, e i tool vanno
+   aggiunti con `ctx.tool.transform(draft => draft.add({name, ...}))`.
+
+   **La riserva che questa misura porta con sé.** Quanto segue è la conseguenza più
+   pesante di tutta la probe, e poggia su una sola osservazione di una sola build:
+   se T7 scopre che la registrazione dagli hooks funziona in un modo che qui
+   fallisce, questa sezione va riletta da capo, non integrata a margine. Non è un
+   fatto acquisito: è un fatto che un'altra esecuzione può ribaltare.
 3. **`context` dentro `execute` non è il `ToolContext` dei typings.** I typings
    dichiarano `{sessionID, messageID, agent, directory, worktree, abort, metadata,
    ask}`; il runtime passa `{sessionID, agent, messageID, id, progress, signal}`.
@@ -133,22 +170,28 @@ plugin è possibile, ma con tre prezzi che la spec non prevedeva.
 **No. `parentID` viene scartato: la sessione creata è una radice.** È l'esito previsto
 dalla spec v2 e la §5 resta valida.
 
-- `POST /api/session` con `parentID:"ses_nonexistent"` → HTTP `200`, sessione `ses_ee9e9e776ffeDivvRJ1nLDVy8U`
+- `POST /api/session` con `parentID:"ses_nonexistent"` → HTTP `200`, sessione `ses_ee9a63431ffehaFDnFA6N9WeNZ`
 - `parentID` nella risposta della POST → `__NO_CHIAVE__`
-- `parentID` in `GET /api/session/ses_ee9e9e776ffeDivvRJ1nLDVy8U` → `__NO_CHIAVE__`
+- `parentID` in `GET /api/session/ses_ee9a63431ffehaFDnFA6N9WeNZ` → `__NO_CHIAVE__`
 - `parentID` in `GET /api/session` → `__NO_CHIAVE__`
 - chiavi della sessione: `cost,id,location,projectID,time,title,tokens`
-- richiesta di controllo identica **senza** `parentID` (`ses_ee9e9e735ffe5FJSLgcAKIwdgF`) → `parentID` = `__NO_CHIAVE__`
-- `GET /api/session/ses_ee9e9e776ffeDivvRJ1nLDVy8U/children` → HTTP `404`, corpo: ``
+- controllo, payload identico salvo `parentID` (`ses_ee9a633f1ffe2bUUDrXoXDTLes`), chiavi in differenza: `1` → `parentID` = `__NO_CHIAVE__`
+- `GET /api/session/ses_ee9a63431ffehaFDnFA6N9WeNZ/children` → HTTP `404`, corpo: ``
 
 
 ### Come è stata misurata
 
-Due richieste a `POST /api/session` identiche salvo la chiave `parentID`, più la
-lettura di `GET /api/session` per cercare il campo, più `GET /api/session/<id>/children`.
-Il confronto con la richiesta di controllo è ciò che distingue «la chiave è stata
-scartata» da «il campo esiste ma è vuoto»: senza il controllo, un `parentID: null`
-sembrerebbe la prova che `parentID` funzioni.
+Due richieste a `POST /api/session` **identiche salvo `parentID`** — stesso titolo,
+stessa directory — più la lettura di `GET /api/session/<id>` e di
+`GET /api/session`, più `GET /api/session/<id>/children`.
+
+Il numero di chiavi in cui i due payload differiscono è misurato e stampato sopra:
+\`$Q3_KEY_DIFF\`. Un valore diverso da 1 significherebbe che il confronto non
+dimostra niente, perché le due richieste non avrebbero una sola variabile.
+
+Il confronto serve a distinguere «la chiave è stata scartata» da «il campo esiste ma
+è vuoto»: senza il controllo, un `parentID: null` sembrerebbe la prova che
+`parentID` funzioni.
 
 Nota sul payload: la specifica OpenAPI di `POST /api/session` per questa build non
 ammette né `directory` né `parentID` — il campo directory si chiama `location:
@@ -176,12 +219,17 @@ task seguenti**, ed è dichiarato qui perché la decisione è di chi legge, non 
 `generate` inoltre **non emette** `session.execution.*`: è una chiamata che
 risponde su HTTP e non sullo stream.
 
-- `POST /api/session/ses_ee9e9e724ffemrJbX4rz5jZuND/generate` {"prompt":"Rispondi SOLO con questo JSON: {…}"} → HTTP `200`
+- `POST /api/session/ses_ee9a633d9ffe7aUdDKTr6XAe7C/generate` {"prompt":"Rispondi SOLO con questo JSON: {…}"} → HTTP `200`
 - testo ricevuto: `{"status":"continue","reason":"ok"}`
-- messaggi in `GET /api/session/ses_ee9e9e724ffemrJbX4rz5jZuND/message`: prima `3`, dopo `3` — **messaggi nuovi: 0**
+- messaggi in `GET /api/session/ses_ee9a633d9ffe7aUdDKTr6XAe7C/message`: prima `3`, dopo `3` — **messaggi nuovi: 0**
 - tipi prima: `idle,assistant,user` — tipi dopo: `idle,assistant,user`
+- **id dei messaggi**, che è la prova e non il conteggio:
+  - prima: `msg_11659d51f001nNsKoXzkPlUCS7,msg_11659d038001XhkzQ4JeMNKCLc,msg_11659d023001lu7esFFIxhNl5R`
+  - dopo: `msg_11659d51f001nNsKoXzkPlUCS7,msg_11659d038001XhkzQ4JeMNKCLc,msg_11659d023001lu7esFFIxhNl5R`
+- `session.execution.*` per questa sessione: `session.execution.started session.execution.succeeded`
+- tutti gli eventi di questa sessione: `session.execution.started session.execution.succeeded session.inbox.delivered session.inbox.enqueued session.instructions.updated session.step.ended session.step.started session.step.streamed session.text.delta session.text.ended session.text.started session.usage.updated`
 - `cost`: prima `0`, dopo `0`
-- `tokens`: prima `{"input":5822,"output":3,"reasoning":0,"cache":{"read":465,"write":0}}`, dopo `{"input":5822,"output":3,"reasoning":0,"cache":{"read":465,"write":0}}`
+- `tokens`: prima `{"input":5821,"output":3,"reasoning":0,"cache":{"read":465,"write":0}}`, dopo `{"input":5821,"output":3,"reasoning":0,"cache":{"read":465,"write":0}}`
 - `outcome`: prima `succeeded`, dopo `succeeded`
 - corpo completo di `generate`: `{"data":{"text":"{\"status\":\"continue\",\"reason\":\"ok\"}"}}`
 - chiavi del primo elemento di `/message`: `id,outcome,time,type`
@@ -209,10 +257,18 @@ noto in §14: è confermato come rischio reale, e resta aperto.
 
 ### Come è stata misurata
 
-Sessione nuova su `space-bunny-free`, listener SSE aperto **prima** del prompt,
-attesa di `session.execution.succeeded`, **poi attesa che la sessione si assesti**,
-snapshot di `GET /api/session/<id>` e di `GET /api/session/<id>/message`, poi
+Sessione nuova su `space-bunny-free`, listener SSE aperto **prima** del prompt e
+filtrato per `data.sessionID`, attesa di `session.execution.succeeded` **di quella
+sessione**, **poi attesa che la sessione si assesti**, snapshot di
+`GET /api/session/<id>` e di `GET /api/session/<id>/message`, poi
 `POST /api/session/<id>/generate`, poi gli stessi due snapshot.
+
+Il filtro per sessione nell'attesa non è un dettaglio: `GET /api/event` è un unico
+stream per tutto il server, e la sessione del tool di Q2 è ancora viva quando parte
+il prompt del giudice. Senza filtro, `sse_wait` può essere soddisfatta dall'evento di
+un'altra sessione. Per questo la prova tiene **sugli id dei messaggi** e non sul
+conteggio: due conteggi uguali possono essere lo stesso insieme o due insiemi
+diversi, gli id no.
 
 Tre cose vengono confrontate, e vanno distinte perché dicono cose diverse:
 
@@ -233,7 +289,13 @@ avvertimento:
    concludeva che `generate` scrivesse nella history; la seconda, dopo aver
    corretto il conteggio ma non l'attesa, riportava «1 prima, 2 dopo» con un
    `assistant` vuoto e concludeva la stessa cosa. La terza, aspettando l'assestamento,
-   riporta zero messaggi nuovi ed è quella giusta.
+   riportava zero messaggi nuovi. Questa esecuzione verifica sugli **id** dei
+   messaggi, non sul numero.
+3. **Non filtrare l'attesa per sessione.** Il primo `sse_wait` di questa prova
+   filtrava sul solo `type`, e poteva essere soddisfatto dall'evento della sessione
+   del tool di Q2. Il numero era comunque giusto — il gate successivo è per-sessione
+   — ma il metodo dichiarato non era quello eseguito. Ora `sse_wait` filtra su
+   `data.sessionID` e rifiuta di partire senza `SESSION_ID`.
 
 Il tempo di assestamento non è trascurabile: nell'esecuzione corretta l'`assistant`
 del primo turno è comparso circa 3 secondi dopo `succeeded`.
@@ -264,7 +326,7 @@ comunque la scelta prudente.
 
 **L'exit code è nel campo `exit`** di `shell.get`, accanto a `status`.
 
-- `POST /api/shell` {"command":"exit 3"} → `{"location":{"directory":"/tmp/opencode/probe-home/work"},"data":{"id":"sh_116163ce7001VEFXsCkZT1pDXJ","status":"running","command":"exit 3","cwd":"/tmp/opencode/probe-home/work","shell":"/usr/bin/bash","file":"/tmp/opencode/probe-home/.local/share/opencode/shell/e30f4f7f4dcaaffeec3e6ef7e7edd2824179067e/sh_116163ce7001VEFXsCkZT1pDXJ.out","pid":870077,"metadata":{},"time":{"started":1791371918567}}}`
+- `POST /api/shell` {"command":"exit 3"} → `{"location":{"directory":"/tmp/opencode/probe-home/work"},"data":{"id":"sh_11659effd001GZeqBVzaNFoKPr","status":"running","command":"exit 3","cwd":"/tmp/opencode/probe-home/work","shell":"/usr/bin/bash","file":"/tmp/opencode/probe-home/.local/share/opencode/shell/e30f4f7f4dcaaffeec3e6ef7e7edd2824179067e/sh_11659effd001GZeqBVzaNFoKPr.out","pid":936957,"metadata":{},"time":{"started":1791376355325}}}`
 - stato finale `exited`, campi di `shell.get`: `command,cwd,exit,file,id,metadata,pid,shell,status,time`
 - campi che contengono "exit": `exit=3`
 - `/output`: ``
@@ -272,13 +334,17 @@ comunque la scelta prudente.
 **Al timeout `sleep 30` con `timeout: 2000` il comando viene ucciso, non esce:**
 `status` diventa `timeout` (non `exited`, non `killed`) e **il campo `exit` non
 esiste affatto** — la chiave è assente, quindi `obj["exit"]` è `undefined`. Il
-decorso è nei `time`: `{"started":1791371918611,"completed":1791371920614}`, durata `2003` ms (timeout richiesto
-2000). Campi di `shell.get`: `command,cwd,file,id,metadata,pid,shell,status,time`. Creazione: `{"location":{"directory":"/tmp/opencode/probe-home/work"},"data":{"id":"sh_116163d13001IdU6WKJvK3P7NJ","status":"running","command":"sleep 30","cwd":"/tmp/opencode/probe-home/work","shell":"/usr/bin/b`.
+decorso è nei `time`: `{"started":1791376355369,"completed":1791376357372}`, durata `2003` ms (timeout richiesto
+2000). Campi di `shell.get`: `command,cwd,file,id,metadata,pid,shell,status,time`. Creazione: `{"location":{"directory":"/tmp/opencode/probe-home/work"},"data":{"id":"sh_11659f029001FtDvYU0Nbn6Ps3","status":"running","command":"sleep 30","cwd":"/tmp/opencode/probe-home/work","shell":"/usr/bin/b`.
 
-**Il comando uscito è ancora in lista:** `GET /api/shell` → `[]`.
-`<id>` del comando uscito presente in lista: conteggio `0`.
-`GET /api/shell/sh_116163ce7001VEFXsCkZT1pDXJ` dopo il termine → HTTP `200` (200 = resta
-leggibile, 404 = sparisce).
+**Il comando uscito è sparito dalla lista**: `GET /api/shell` → `[]`.
+Occorrenze del suo id nella lista: `0`.
+`GET /api/shell/sh_11659effd001GZeqBVzaNFoKPr` dopo il termine → HTTP `200` (200 = resta
+leggibile per id, 404 = non esiste più).
+
+Le due cose non sono la stessa, ed è il punto: se l'entry non è in lista ma resta
+leggibile per id, una `api.ts` che usa la lista per sapere cosa è vivo e una che usa
+l'id per riprendere un comando in corso prendono percorsi diversi.
 
 
 ### Come è stata misurata
@@ -308,24 +374,49 @@ inutile ma innocua. Entrambe sono dettagli di T5, non cambiano \§3.
 **Entrambi arrivano davvero, con payload distinti.** `interrupted` porta
 `data.reason:"user"`; `failed` porta `data.error` con `type` e `message`.
 
-- `interrupted`: `POST /api/session/ses_ee9e9baa8ffeBMpxNDnM9YjDon/interrupt` → HTTP `200`, corpo `{"interrupted":true}`.
+- `interrupted`: `POST /api/session/ses_ee9a60797ffenAP0oUcdQmwjki/interrupt` → HTTP `200`, corpo `{"interrupted":true}`.
   `session.execution.*` arrivati: `session.execution.interrupted session.execution.started`. `outcome` della sessione dopo: `interrupted`.
-  Payload: `{"id":"evt_116165907001vOKzhBPX8axCBV","created":1791371925767,"type":"session.execution.interrupted","data":{"sessionID":"ses_ee9e9baa8ffeBMpxNDnM9YjDon","reason":"user"},"durable":{"aggregateID":"ses_ee9e9baa8ffeBMpxNDnM9YjDon","seq":10,"version":1}}`
-- `session.step.failed` in questa esecuzione: `{"id":"evt_1161659050018pcnv6HKHef6iy","created":1791371925765,"type":"session.step.failed","location":{"directory":"/tmp/opencode/probe-home/work"},"data":{"sessionID":"ses_ee9e9baa8ffeBMpxNDnM9YjDon","assistantMessageID":"msg_1161649640010n4hA1HbPnsBLb","error":{"type":"aborted","message":"Step interrupted"}},"durable":{"aggregateID":"ses_ee9e9baa8ffeBMpxNDnM9YjDon","seq":9,"version":1}}`
+  Payload: `{"id":"evt_1165a0c1a0018g0hMklcCSgRLk","created":1791376362523,"type":"session.execution.interrupted","data":{"sessionID":"ses_ee9a60797ffenAP0oUcdQmwjki","reason":"user"},"durable":{"aggregateID":"ses_ee9a60797ffenAP0oUcdQmwjki","seq":10,"version":1}}`
+- `session.step.failed` in questa esecuzione: `{"id":"evt_1165a0c18001fWEbmvdGntPM15","created":1791376362520,"type":"session.step.failed","location":{"directory":"/tmp/opencode/probe-home/work"},"data":{"sessionID":"ses_ee9a60797ffenAP0oUcdQmwjki","assistantMessageID":"msg_11659fc77001MR3FKpACWDDrs3","error":{"type":"aborted","message":"Step interrupted"}},"durable":{"aggregateID":"ses_ee9a60797ffenAP0oUcdQmwjki","seq":9,"version":1}}`
   (arrivato, con `data.error.type` e `data.assistantMessageID`)
-- `failed`: sessione su modello inesistente `ses_ee9e99d0cffeq68GEI7ly7WTZo`, `POST /prompt` → HTTP `200`.
+- `failed`: sessione su modello inesistente `ses_ee9a5e9f5ffe0LLnF0kUgVz1sR`, `POST /prompt` → HTTP `200`.
   `session.execution.*` arrivati: `session.execution.failed session.execution.started`. `outcome` dopo: `failed`.
-  Payload: `{"id":"evt_1161666ff0012sVST0wiCPpiYX","created":1791371929343,"type":"session.execution.failed","data":{"sessionID":"ses_ee9e99d0cffeq68GEI7ly7WTZo","error":{"type":"provider.no-route","message":"Model unavailable: opencode/modello-che-non-esiste-probe"}},"durable":{"aggregateID":"ses_ee9e99d0cffeq68GEI7ly7WTZo","seq":5,"version":1}}`
+  Payload: `{"id":"evt_1165a1a1c001wUJsk0zPw32Eem","created":1791376366108,"type":"session.execution.failed","data":{"sessionID":"ses_ee9a5e9f5ffe0LLnF0kUgVz1sR","error":{"type":"provider.no-route","message":"Model unavailable: opencode/modello-che-non-esiste-probe"}},"durable":{"aggregateID":"ses_ee9a5e9f5ffe0LLnF0kUgVz1sR","seq":5,"version":1}}`
+
+**La riserva su come è stato prodotto `failed`.** Il modello inesistente non
+produce un `failed` che distingua «modello inesistente» da «modello che il runtime
+non riesce a instradare»: `README.md` (regola 4) avverte che lo stesso
+`provider.no-route` / `Model unavailable: …` compare anche quando il catalogo dei
+modelli non è ancora pronto. La prova aspetta il catalogo prima di ogni turno, e per
+questa via il turno è partito davvero; ma **questa misura dimostra che `failed`
+arriva e che il suo `data.error` è tipizzato**, non che `failed` significhi
+sempre «modello inesistente». Per distinguere i due casi un task successivo
+dovrebbe attendere il catalogo anche per il modello di prova, o attendere
+esplicitamente che `GET /api/model` lo contenga prima di dichiarare `failed`
+atteso.
 
 Riepilogo dei `type` distinti osservati su tutti i listener di questa esecuzione:
-`server.connected session.execution.failed session.execution.interrupted session.execution.started session.execution.succeeded session.inbox.delivered session.inbox.enqueued session.instructions.updated session.reasoning.delta session.reasoning.ended session.reasoning.started session.step.ended session.step.failed session.step.started session.step.streamed session.text.delta session.text.ended session.text.started session.usage.updated`
+`server.connected session.execution.failed session.execution.interrupted session.execution.started session.execution.succeeded session.inbox.delivered session.inbox.enqueued session.instructions.updated session.reasoning.delta session.reasoning.ended session.reasoning.started session.step.ended session.step.failed session.step.started session.step.streamed session.text.delta session.text.ended session.text.started session.tool.called session.tool.input.ended session.tool.input.started session.tool.progress session.tool.success session.usage.updated`
 
 La sua assenza è la misura che ha corretto la v1: `session.idle` **non compare in
 nessuno dei listener di questa esecuzione** — `0` occorrenze in tutto,
-su `3 (events-1.log events-2.log events-3.log)` file di eventi.
-Il token esiste nel binario come dichiarazione di schema, ma nessun emittente lo
-produce. È citato qui **solo** per documentare che la misura lo cerca e non lo
-trova: nessun task successivo deve usarlo, nemmeno in un commento.
+su `4 (events-1.log events-2.log events-3.log events-4.log)` file di eventi.
+
+**Come è stato contato.** Su **4 turni** arrivati a un evento terminale,
+per sessione: `ses_ee9a5e9f5ffe0LLnF0kUgVz1sR ses_ee9a60797ffenAP0oUcdQmwjki ses_ee9a633d9ffe7aUdDKTr6XAe7C ses_ee9a64802ffeIgk1O7WUmCf22E`.
+
+Quattro, non tre: il turno che chiede al modello di invocare `probe_tool` (Q2) ha un
+listener come gli altri, quindi anche il suo `started` finisce in un file di eventi.
+Ogni attesa è filtrata su `data.sessionID` della sessione che si sta misurando, perché
+`GET /api/event` è un unico stream per tutto il server e le sessioni restano vive
+in contemporanea.
+
+Il token è però presente nel binario: `strings -n 6 "/home/ld/.opencode/bin/opencode" | grep -c
+'^session\.idle$'` → `1` occorrenze. Esistere nel binario ed essere
+emesso sono due fatti distinti, e solo il secondo è negato dalla misura.
+
+È citato qui **solo** per documentare che la misura lo cerca e non lo trova: nessun
+task successivo deve usarlo, nemmeno in un commento.
 
 
 ### Come è stata misurata
@@ -385,10 +476,25 @@ nessuno lo aveva chiesto.
 ### Contratto del plugin, che i typings non descrivono
 
 - **Il default export di un plugin non è una funzione.** È un oggetto
-  `{ id, setup }` (o `{ id, effect }`). Un default export funzione viene rifiutato
-  con `Plugin must export a default definition with an id and an effect or setup
-  function.` I typings 1.18.16 dichiarano `Plugin` come funzione: sono sbagliati per
-  2.0.14. Cambia l'intestazione di `src/index.ts` in T7.
+  `{ id, setup }` (o `{ id, effect }`). Misurato in questa esecuzione con
+  `probe/controprove/bad-export/`, che esporta una funzione: il modulo viene
+  caricato (`1`) e il log applicativo registra
+  `Plugin must export a default definition with an id and an effect or setup function. (cause: SchemaError(Expected object\n  at [\` — il testo completo è in
+  `probe/out/controprove/opencode.log`.
+  In `GET /api/plugin` il plugin risulta `non in inventario`: un modulo rifiutato
+  dallo schema non entra nell'inventario, quindi lì la sua assenza non distingue
+  «non caricato» da «caricato e attivo» — è il log a dirlo.
+  I typings 1.18.16 dichiarano `Plugin` come funzione: sono sbagliati per 2.0.14.
+  Cambia l'intestazione di `src/index.ts` in T7.
+
+- **`command.transform` e `tool.transform` prendono una callback, non un editor.**
+  Chiamarle con `{}` — cioè seguendo i typings — disabilita il plugin. Misurato in
+  questa esecuzione con `probe/controprove/bad-transform/`, che le chiama con `{}`:
+  caricato `1` volte, poi
+  `disabled plugin after transform failure" plugin.id=probe-bad-transform state=tool ref=err_537762a7 cause="Cause([Die(Ty` / `state=tool`, e in
+  `GET /api/plugin` il plugin risulta `failed`.
+  Il `state` è **uno solo dei due** che il difetto provoca: non si deduce l'altro da
+  questa misura. Artefatti in `probe/out/controprove/`.
 
 - **`Object.keys(input)` al `setup`** (misurato, non deduotto):
 
@@ -397,9 +503,9 @@ nessuno lo aveva chiesto.
   ```
 
   I typings dichiarano sette chiavi: `client, project, directory, worktree,
-  experimental_workspace, serverUrl, $`. Nel runtime ci sono ventisei, e le sette
-  dei typings non ci sono più: non c'è `client`, non c'è `$`. Al loro posto ci sono
-  i servizi su cui la spec §2.3 dice di non poter contare.
+  experimental_workspace, serverUrl, $`. Nel runtime sono 25 chiavi, e
+  nessuna delle sette è fra queste: non c'è `client`, non c'è `$`. Al loro posto ci
+  sono i servizi su cui la spec §2.3 dice di non poter contare.
 
 - **I servizi dentro l'input, con i loro metodi.** Sono l'alternativa alle rotte
   `/api/*` che §2.3 dichiara assenti dai typings, e la loro esistenza è un fatto:
@@ -409,7 +515,7 @@ nessuno lo aveva chiesto.
 permission: hook(), list(), get(), reply()
 event: subscribe()
 shell: hook()
-vcs: get(), base(), branch(), status(), diff(), reload(), transform()
+vcs: get(), base(), branch (object, non chiamabile), status(), diff(), reload(), transform()
   ```
 
   Ci sono `session.generate`, `session.synthetic`, `session.interrupt`,
@@ -429,10 +535,31 @@ vcs: get(), base(), branch(), status(), diff(), reload(), transform()
   server «isolato» carica i suoi plugin. `env -u` su otto variabili è ciò che rende
   la misura credibile.
 
-- **`opencode serve` non stampa `server password` quando la password viene
-  dall'ambiente.** `OPENCODE_PASSWORD` funziona; `OPENCODE_SERVER_PASSWORD` **non**
-  (`/api/info` resta 401). La probe fissa la password per via ambiente invece di
-  leggere il log.
+- **`OPENCODE_SERVER_PASSWORD` autentica esattamente come `OPENCODE_PASSWORD`.**
+  Controprova in questa esecuzione: un server avviato con **solo**
+  `OPENCODE_SERVER_PASSWORD` (con `OPENCODE_PASSWORD` tolto dall'ambiente) scrive
+  \`server listening on http://127.0.0.1:4601\` e a `GET /api/info` con basic auth risponde
+  \`HTTP 200\`. Il server principale, avviato con `OPENCODE_PASSWORD`, risponde
+  `200` sulla stessa rotta. Le due variabili sono equivalenti per l'autenticazione, e
+  la probe usa `OPENCODE_PASSWORD` solo perché con una password dall'ambiente il
+  binario non stampa la riga \`server password …\` (punto seguente) — non perché
+  l'altra non funzioni.
+
+  **Correzione di una versione precedente di questa probe**, che dichiarava il
+  contrario. Quella misura non aveva verificato che il server fosse in ascolto: il
+  `000` che `curl` restituisce quando la connessione fallisce era letto come un
+  `401`, e quel `401` non era mai arrivato. La lezione è quella che `README.md`
+  (regola 4) già scrive per un altro caso: **un codice di risposta che non è
+  arrivato è `000`, non `401`**.
+  quel \(401\) non c'era mai stato. La lezione è quella che `README.md` (regola 4)
+  già scrive per un altro caso: **un codice di risposta che non è arrivato è
+  \`000\`, non \(401\)**.
+
+- **`opencode serve` non stampa `server password …`** quando la password arriva
+  dall'ambiente: con `OPENCODE_PASSWORD` impostata, lo stdout del server contiene
+  solo la riga `server listening on …`. Verificato in questa esecuzione su
+  `probe/out/serve.log`, che è il log mantenuto per questa run e non accumula
+  righe delle precedenti.
 
 - **`input.serverUrl`, `input.directory`, `input.project` sono `null` e
   `input.worktree` è `{}`** dentro `setup`, con un `HOME` isolato. Se T2 conta su
@@ -442,27 +569,30 @@ vcs: get(), base(), branch(), status(), diff(), reload(), transform()
 
 ### Rotte misurate su questa build
 
-- `POST /api/session`, `GET /api/session`, `GET /api/session/<id>`,
+- Rotte attraversate da `probe/run.sh` in questa esecuzione, tutte con risposta
+  leggibile: `GET /api/info`, `GET /api/model`, `GET /api/command`,
+  `POST /api/session`, `GET /api/session`, `GET /api/session/<id>`,
   `GET /api/session/<id>/message`, `POST /api/session/<id>/prompt`,
   `POST /api/session/<id>/generate`, `POST /api/session/<id>/interrupt`,
   `POST /api/shell`, `GET /api/shell`, `GET /api/shell/<id>`,
-  `GET /api/shell/<id>/output`, `GET /api/event`, `GET /api/plugin`,
-  `GET /api/command`, `GET /api/info`.
-- **`GET /api/tool` non esiste** su 2.0.14: non è in `/openapi.json` e risponde
-  `404` (misurato, HTTP `404`). Il brief lo indicava come disponibile; la
-  forma dei tool si misura dal plugin (Q2), non dall'endpoint.
-- `GET /api/session/<id>/children` non è in `/openapi.json` e risponde `404`
-  (misurato, HTTP `404`).
+  `GET /api/shell/<id>/output`, `GET /api/event`.
+- Nelle controprove: `GET /api/plugin` (server separato), `GET /api/info` per il
+  test su `OPENCODE_SERVER_PASSWORD`.
+- **`GET /api/tool` non esiste**: risponde `404` (misurato in questa
+  esecuzione). Il brief lo indicava come disponibile; la forma dei tool si misura
+  dal plugin (Q2), non dall'endpoint.
+- `GET /api/session/<id>/children` risponde `404` (misurato in questa
+  esecuzione).
 
 
 ---
 
 ## Traccia
 
-- run: `1791371903-869792`
-- porta: `4599`, `HOME=$ROOT`, cwd `$ROOT/work`
+- run: `1791376319-936205`
+- porta: `4599`, `HOME` e `XDG_CONFIG_HOME` su una directory temporanea, cwd nella sua `work/`
 - log del server: `probe/out/serve.log`
-- eventi SSE: 3 (events-1.log events-2.log events-3.log) file in `probe/out/events-*.log`
+- eventi SSE: 4 (events-1.log events-2.log events-3.log events-4.log) file in `probe/out/events-*.log`
 - output del plugin: `probe/out/plugin-last.jsonl`
 - snapshot di sessione: `probe/out/session-*.json`
 
