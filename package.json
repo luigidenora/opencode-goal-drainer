@@ -1,0 +1,14 @@
+{
+  "name": "opencode-goal-drainer",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
