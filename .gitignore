@@ -1,3 +1,9 @@
 node_modules/
 dist/
 *.log
+
+# Le prove della probe sono evidenza grezza di una singola esecuzione: servono a
+# chi legge FINDINGS.md mentre la giudica, non nel repository. FINDINGS.md resta
+# tracciato, il resto no.
+probe/out/*
+!probe/out/FINDINGS.md
