@@ -1,0 +1,34 @@
+{
+  "name": "opencode-goal-drainer",
+  "version": "0.2.0",
+  "description": "Un /goal per OpenCode: imposta una condizione di completamento e ci lavora finché non è soddisfatta, con verifica deterministica opzionale e modalità backlog.",
+  "type": "module",
+  "license": "MIT",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "files": [
+    "index.ts",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "goal",
+    "agent",
+    "autonomous",
+    "loop"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "test:watch": "node --experimental-strip-types --test --watch test/*.test.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

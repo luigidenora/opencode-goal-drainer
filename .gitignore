@@ -1,3 +1,5 @@
 node_modules/
-dist/
+.superpowers/
+probe/out/*
+!probe/out/FINDINGS.md
 *.log
