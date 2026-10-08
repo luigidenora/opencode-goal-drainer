@@ -8,11 +8,27 @@ export interface TokenUsage {
   cache: { read: number; write: number }
 }
 
+export type GoalStatus =
+  | "idle"
+  | "running"
+  | "achieved"
+  | "failed"
+  | "cleared"
+  | "paused-utente"
+  | "stopped"
+
 export interface GoalState {
   ownerSessionID: string
-  status: "idle" | "running" | "paused-utente" | "stopped"
-  backlogPath: string
+  /** `condition` = goal generico come quello di Claude Code. `backlog` = drenaggio di più item. */
+  mode: "condition" | "backlog"
+  /** Modalità condition: la condizione di completamento. */
+  condition: string | null
+  /** Gate deterministico opzionale, in entrambe le modalità. */
+  verify: string | null
+  /** Modalità backlog. */
+  backlogPath: string | null
   current: string | null
+  status: GoalStatus
   turns: number
   redStreak: number
   spend: Record<string, { cost: number; tokens: TokenUsage }>
@@ -20,6 +36,8 @@ export interface GoalState {
   lastReason: string | null
   lastEventAt: number
   fingerprint: string | null
+  startedAt: number
+  maxTurns: number
   updatedAt: number
 }
 
@@ -46,31 +64,35 @@ export function writeState(root: string, s: GoalState): void {
   renameSync(tmp, p)
 }
 
+export function blankState(sessionID: string, now: number, ttlMs: number): GoalState {
+  return {
+    ownerSessionID: sessionID,
+    mode: "condition",
+    condition: null,
+    verify: null,
+    backlogPath: null,
+    current: null,
+    status: "idle",
+    turns: 0,
+    redStreak: 0,
+    spend: {},
+    lease: { expiresAt: now + ttlMs },
+    lastReason: null,
+    lastEventAt: now,
+    fingerprint: null,
+    startedAt: now,
+    maxTurns: 0,
+    updatedAt: now,
+  }
+}
+
 export function acquireLease(
   s: GoalState | null,
   sessionID: string,
   now: number,
   ttlMs: number,
 ): { ok: boolean; reason?: string; state?: GoalState } {
-  if (!s) {
-    return {
-      ok: true,
-      state: {
-        ownerSessionID: sessionID,
-        status: "idle",
-        backlogPath: "",
-        current: null,
-        turns: 0,
-        redStreak: 0,
-        spend: {},
-        lease: { expiresAt: now + ttlMs },
-        lastReason: null,
-        lastEventAt: now,
-        fingerprint: null,
-        updatedAt: now,
-      },
-    }
-  }
+  if (!s) return { ok: true, state: blankState(sessionID, now, ttlMs) }
   if (s.ownerSessionID === sessionID) {
     return { ok: true, state: { ...s, lease: { expiresAt: now + ttlMs } } }
   }
@@ -89,4 +111,8 @@ export function renewLease(s: GoalState, sessionID: string, now: number, ttlMs: 
   s.lease.expiresAt = now + ttlMs
   s.updatedAt = now
   return true
+}
+
+export function isTerminal(status: GoalStatus): boolean {
+  return status === "achieved" || status === "failed" || status === "cleared" || status === "stopped"
 }
