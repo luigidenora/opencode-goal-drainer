@@ -103,28 +103,39 @@ export function setStatus(
 ): string {
   const marker = status === "done" ? "x" : status === "blocked" ? "!" : status === "invalid" ? "?" : " "
   const lines = markdown.split("\n")
-  const out: string[] = []
-  let current: string | null = null
-  for (const line of lines) {
-    const h = /^## \[([ x!?])\]\s*(\S+)/.exec(line)
-    if (h) current = h[2]
-    if (current === id) {
-      if (h) {
-        const rest = line.replace(/^## \[[ x!?]\]\s*\S+/, "## [" + marker + "] " + id)
-        out.push(rest)
-        continue
-      }
-      if (/^evidence:/i.test(line.trim())) continue
-      out.push(line)
-      if (line.trim() === "" && evidence && Object.keys(evidence).length > 0) {
-        out.push("evidence:")
-        out.push(renderEvidence(evidence))
-      }
+  // Trova i confini del blocco dell'item: dalla sua intestazione alla prossima
+  // intestazione di pari livello, o alla fine del documento.
+  let start = -1
+  let end = lines.length
+  for (let i = 0; i < lines.length; i++) {
+    const h = /^## \[[ x!?]\]\s*(\S+)/.exec(lines[i])
+    if (!h) continue
+    if (start === -1 && h[1] === id) {
+      start = i
       continue
     }
-    out.push(line)
+    if (start !== -1) {
+      end = i
+      break
+    }
   }
-  return out.join("\n")
+  if (start === -1) return markdown
+
+  const head = lines[start].replace(/^## \[[ x!?]\]\s*\S+/, `## [${marker}] ${id}`)
+  const body = lines
+    .slice(start + 1, end)
+    .filter((l) => !/^evidence:/i.test(l.trim()))
+    .filter((l) => !/^\s*(date|turns|exitCode|reason):/.test(l))
+  while (body.length > 0 && body[body.length - 1].trim() === "") body.pop()
+
+  const tail: string[] = []
+  if (evidence && Object.keys(evidence).length > 0) {
+    tail.push("", "evidence:", ...renderEvidence(evidence).split("\n"))
+  }
+
+  const out = [...lines.slice(0, start), head, ...body, ...tail, "", ...lines.slice(end)]
+  // normalizza: una sola riga vuota prima della prossima intestazione
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").replace(/\n+$/, "\n")
 }
 
 export function nextOpen(items: Item[]): Item | null {

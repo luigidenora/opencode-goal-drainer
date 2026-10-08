@@ -381,11 +381,60 @@ export const GoalDrainer = {
           draft.add({
             name: "goal",
             description: "Goal drainer: drena una backlog di item finché il comando Verify: di ciascuno non passa.",
-            template:
-              "Usa il tool goal_control per gestire il goal. Argomenti: $ARGUMENTS. " +
-              "Se gli argomenti iniziano con 'drain', chiama goal_control con action=start e backlogPath uguale al percorso indicato. " +
-              "Se sono 'status', 'report' o 'stop', chiama l'azione corrispondente. " +
-              "Se sono 'retry <id>', chiama action=retry con itemId=<id>.",
+            // Il runtime V2 invoca `execute`, non un `template`: registrare un template
+            // produce "Ne.execute is not a function" al momento dell'invocazione.
+            execute: async (invocation: any) => {
+              const sid: string = invocation?.sessionID ?? state.sessionID
+              const delivery = invocation?.delivery ?? "steer"
+              const args = String(invocation?.prompt?.text ?? "").trim()
+              const [verb, ...rest] = args.split(/\s+/).filter(Boolean)
+              const reply = async (text: string) => {
+                await session.prompt({ sessionID: sid, text, delivery })
+              }
+              if (!verb || verb === "status" || verb === "report") {
+                const p = resolve(root, state.s?.backlogPath ?? "docs/backlog.md")
+                if (!existsSync(p)) return reply(`Nessuna backlog nota. Usa: /goal drain <percorso>`)
+                const items = parseBacklog(readBacklog(p))
+                const by = (st: ItemStatus) => items.filter((i) => i.status === st).map((i) => i.id).join(", ") || "—"
+                const spend = Object.entries(state.s?.spend ?? {})
+                  .map(([m, u]) => `  ${m}: $${u.cost.toFixed(4)}${o.monthlyLimitsUSD[m] ? ` / $${((o.budgetPercent / 100) * o.monthlyLimitsUSD[m]).toFixed(2)}` : " (nessun tetto noto)"}`)
+                  .join("\n") || "  (nessuna spesa registrata)"
+                return reply(
+                  [
+                    `Stato: ${state.s?.status ?? "idle"}  turni: ${state.s?.turns ?? 0}  item: ${state.s?.current ?? "—"}`,
+                    `Ultimo esito: ${state.s?.lastReason ?? "—"}`,
+                    `done: ${by("done")} | bloccati: ${by("blocked")} | invalidi: ${by("invalid")} | aperti: ${by("open")}`,
+                    `Spesa (solo i modelli Go scalano l'abbonamento):`,
+                    spend,
+                  ].join("\n"),
+                )
+              }
+              if (verb === "stop") {
+                stop("fermato dall'utente")
+                return reply("Goal fermato. Lo stato è conservato: /goal drain per riprendere.")
+              }
+              if (verb === "retry") {
+                const id = rest[0]
+                if (!id) return reply("Serve un id: /goal retry B-04")
+                const p = resolve(root, state.s?.backlogPath ?? "docs/backlog.md")
+                writeFileSync(p, setStatus(readBacklog(p), id, "open", {}))
+                if (state.s) {
+                  state.s.status = "running"
+                  save()
+                }
+                return reply(`Item ${id} riaperto. Riprendo.`)
+              }
+              if (verb === "drain") {
+                const p = resolve(root, rest[0] ?? "docs/backlog.md")
+                if (!existsSync(p)) return reply(`Backlog non trovata: ${p}`)
+                const r = await start(sid, p)
+                if (!r.ok) return reply(r.message)
+                return reply(
+                  `${r.message}. D'ora in poi lavora sugli item uno alla volta: esegui il comando Verify: dell'item corrente, e se fallisce correggi il codice. Non chiedere conferma.`,
+                )
+              }
+              return reply(`Azione non riconosciuta: "${verb}". Usa drain | status | report | stop | retry.`)
+            },
           })
         })
       } catch {
