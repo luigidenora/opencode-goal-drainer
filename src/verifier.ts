@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
+import { readFileSync, statSync } from "node:fs"
+import { resolve } from "node:path"
 
 export const FINGERPRINT_EXCLUDES: string[] = [
   ".git/",
@@ -43,10 +45,41 @@ export function verifySync(input: { command: string; cwd: string; timeoutMs: num
   }
 }
 
+/**
+ * Impronta del lavoro: hash di **percorso più contenuto** dei file non esclusi.
+ *
+ * Hashare i soli percorsi non basta: finché l'agente lavora sullo stesso file la
+ * lista dei percorsi non cambia, e l'anti-livelock scambierebbe il lavoro in corso
+ * per stallo. I file oltre `MAX_HASH_BYTES` contribuiscono con dimensione e mtime,
+ * che è un'approssimazione dichiarata e sufficiente per accorgersi di una modifica.
+ */
+const MAX_HASH_BYTES = 1024 * 1024
+
 export function fingerprintSync(root: string, paths: string[]): string {
   const keep = paths.filter((p) => !isExcluded(p)).sort()
   if (keep.length === 0) throw new Error("no-vcs")
-  return createHash("sha256").update(keep.join("\n")).digest("hex")
+  const h = createHash("sha256")
+  for (const p of keep) {
+    h.update(p)
+    h.update("\0")
+    const abs = resolve(root, p)
+    try {
+      const st = statSync(abs)
+      if (!st.isFile()) {
+        h.update("not-a-file")
+      } else if (st.size <= MAX_HASH_BYTES) {
+        h.update(readFileSync(abs))
+      } else {
+        h.update(`${st.size}:${st.mtimeMs}`)
+      }
+    } catch {
+      // Un percorso elencato da git ma non più leggibile (cancellato nel frattempo)
+      // contribuisce come assente: è comunque un cambiamento.
+      h.update("missing")
+    }
+    h.update("\0")
+  }
+  return h.digest("hex")
 }
 
 export function changedPaths(root: string): string[] {

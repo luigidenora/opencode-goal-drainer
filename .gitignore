@@ -1,4 +1,5 @@
 node_modules/
+.superpowers/
 probe/out/*
 !probe/out/FINDINGS.md
-.superpowers/
+*.log
